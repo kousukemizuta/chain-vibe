@@ -132,8 +132,8 @@
         .region-div::after { content: ''; flex: 1; height: 1px; background: var(--border); }
         
         /* Detail Screen */
-        .detail-head { position: relative; display: flex; justify-content: center; padding: 16px; background: var(--surface); }
-        .detail-img { width: 200px; height: 267px; object-fit: cover; border-radius: var(--r-lg); }
+        .detail-head { position: relative; height: 250px; }
+        .detail-img { width: 100%; height: 100%; object-fit: cover; }
         .detail-back { position: absolute; top: 16px; left: 16px; width: 40px; height: 40px; background: rgba(0,0,0,0.5); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 20px; }
         .detail-body { padding: 20px; }
         .detail-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 16px; }
@@ -356,15 +356,10 @@
                         <div class="img-placeholder" id="imgPlaceholder"><div style="font-size:32px">📷</div><div>画像をアップロード</div></div>
                         <div class="crop-container" id="cropContainer"><img class="crop-image" id="cropImage"></div>
                     </label>
-                    <div class="img-hint">※ホーム画面と同じサイズでプレビュー</div>
+                    <div class="img-hint">※ホーム画面と同じサイズでプレビュー（2本指で拡大縮小）</div>
                     <div class="crop-controls" id="cropControls" style="display:none">
-                        <span style="font-size:11px;color:var(--text3)">10%</span>
-                        <input type="range" class="crop-slider" id="cropSlider" min="10" max="200" value="100" oninput="updateCropScale()">
-                        <span style="font-size:11px;color:var(--text3)">200%</span>
-                        <span style="font-size:12px;color:var(--primary);min-width:40px;text-align:center" id="scaleDisplay">100%</span>
                         <button type="button" class="btn btn-sm btn-s" onclick="resetCrop()">リセット</button>
                     </div>
-                    <div class="img-hint" id="pinchHint" style="display:none">📱 スマホ: 2本指で拡大縮小</div>
                     <div class="input-group"><label class="label">タイトル</label><input type="text" class="input" id="eventTitle" required></div>
                     <div class="input-group"><label class="label">日時</label><input type="datetime-local" class="input" id="eventDate" required></div>
                     <div class="input-group"><label class="label">場所</label><input type="text" class="input" id="eventVenue" required></div>
@@ -831,18 +826,11 @@
                 upload.classList.add('has-image');
                 $('cropControls').style.display = 'flex';
                 
-                // Show pinch hint on touch devices
-                if ('ontouchstart' in window) {
-                    $('pinchHint').style.display = 'block';
-                }
-                
                 containerW = container.offsetWidth || 180;
                 containerH = container.offsetHeight || 240;
                 cropScale = 1;
                 cropX = 0;
                 cropY = 0;
-                $('cropSlider').value = 100;
-                $('scaleDisplay').textContent = '100%';
                 updateCropPosition();
                 
                 img.onmousedown = startDrag;
@@ -878,8 +866,7 @@
             e.preventDefault();
             const currentDistance = getPinchDistance(e.touches);
             const scale = (currentDistance / initialPinchDistance) * initialScale;
-            cropScale = Math.max(0.1, Math.min(2, scale)); // 10% to 200%
-            syncSliderToScale();
+            cropScale = Math.max(0.2, Math.min(5, scale)); // 20% to 500%
             updateCropPosition();
         } else if (e.touches.length === 1 && isDragging) {
             // Single finger drag
@@ -901,15 +888,8 @@
     }
     
     function updateCropScale() {
-        cropScale = $('cropSlider').value / 100;
-        $('scaleDisplay').textContent = Math.round(cropScale * 100) + '%';
+        // Keep for compatibility but not used with slider removed
         updateCropPosition();
-    }
-    
-    function syncSliderToScale() {
-        const sliderValue = Math.round(cropScale * 100);
-        $('cropSlider').value = Math.max(10, Math.min(200, sliderValue));
-        $('scaleDisplay').textContent = sliderValue + '%';
     }
     
     function updateCropPosition() {
@@ -971,8 +951,6 @@
         cropScale = 1;
         cropX = 0;
         cropY = 0;
-        $('cropSlider').value = 100;
-        $('scaleDisplay').textContent = '100%';
         updateCropPosition();
     }
     
