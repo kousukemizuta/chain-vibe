@@ -10,6 +10,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-storage-compat.js"></script>
     <style>
         :root {
             --primary: #FF6B00;
@@ -559,6 +560,7 @@
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const db = firebase.firestore();
+    const storage = firebase.storage();
     
     // ========================================
     // Global State
@@ -810,7 +812,8 @@
     // ========================================
     // Image Handling
     // ========================================
-    function compressImage(file, maxWidth = 800, quality = 0.7) {
+    // Storage用：高画質で画像を処理（圧縮を軽減）
+    function compressImage(file, maxWidth = 1200, quality = 0.9) {
         return new Promise(resolve => {
             const reader = new FileReader();
             reader.onload = e => {
@@ -822,17 +825,19 @@
                     canvas.width = w;
                     canvas.height = h;
                     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                    let result = canvas.toDataURL('image/jpeg', quality);
-                    while (result.length > 500000 && quality > 0.1) {
-                        quality -= 0.1;
-                        result = canvas.toDataURL('image/jpeg', quality);
-                    }
-                    resolve(result);
+                    canvas.toBlob(blob => resolve(blob), 'image/jpeg', quality);
                 };
                 img.src = e.target.result;
             };
             reader.readAsDataURL(file);
         });
+    }
+    
+    // StorageにアップロードしてURLを取得
+    async function uploadImageToStorage(blob, path) {
+        const ref = storage.ref().child(path);
+        await ref.put(blob);
+        return await ref.getDownloadURL();
     }
     
     function loadCropImage(e) {
@@ -1006,29 +1011,27 @@
             const img = $('cropImage');
             const canvas = document.createElement('canvas');
             
-            canvas.width = containerW || 180;
-            canvas.height = containerH || 240;
+            // 高解像度で出力（元は180x240だったが、3倍に）
+            canvas.width = 540;
+            canvas.height = 720;
             
             const ctx = canvas.getContext('2d');
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
+            const displayW = containerW || 180;
+            const displayH = containerH || 240;
             const scaleX = cropImg.width / img.offsetWidth;
             const scaleY = cropImg.height / img.offsetHeight;
             const sx = -cropX * scaleX;
             const sy = -cropY * scaleY;
-            const sw = canvas.width * scaleX;
-            const sh = canvas.height * scaleY;
+            const sw = displayW * scaleX;
+            const sh = displayH * scaleY;
             
             ctx.drawImage(cropImg, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
             
-            let result = canvas.toDataURL('image/jpeg', 0.8);
-            let quality = 0.8;
-            while (result.length > 500000 && quality > 0.1) {
-                quality -= 0.1;
-                result = canvas.toDataURL('image/jpeg', quality);
-            }
-            resolve(result);
+            // Blobとして返す（高画質）
+            canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.92);
         });
     }
     
@@ -1070,12 +1073,26 @@
         
         log('Creating event...');
         
-        const eventImg = await getCroppedImage();
+        const eventImgBlob = await getCroppedImage();
         let region = $('eventRegion').value;
         if (region === 'other') region = $('otherRegion').value || 'other';
         
         // Use Date.now() for immediate ordering (no index required)
         const now = Date.now();
+        
+        // 画像をStorageにアップロード
+        let imageUrl = 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800';
+        if (eventImgBlob) {
+            try {
+                toast('画像をアップロード中...', 'success');
+                const imagePath = `events/${user.uid}/${now}.jpg`;
+                imageUrl = await uploadImageToStorage(eventImgBlob, imagePath);
+                log('Image uploaded: ' + imageUrl);
+            } catch (imgErr) {
+                log('Image upload failed: ' + imgErr.message);
+                toast('画像アップロード失敗、デフォルト画像を使用します', 'error');
+            }
+        }
         
         const data = {
             type: evType,
@@ -1090,7 +1107,7 @@
             confirmedArtists: [],
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             createdAtNum: now, // Numeric timestamp for fallback ordering
-            imageUrl: eventImg || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800'
+            imageUrl: imageUrl
         };
         
         if (evType === 'A') {
@@ -1427,16 +1444,8 @@
         await navigator.clipboard.writeText(text);
         
         if (ev.imageUrl) {
-            if (ev.imageUrl.startsWith('data:')) {
-                const link = document.createElement('a');
-                link.download = 'sukimaster-event.jpg';
-                link.href = ev.imageUrl;
-                link.click();
-                toast('画像を保存しました！キャプションもコピー済み');
-            } else {
-                window.open(ev.imageUrl, '_blank');
-                toast('キャプションをコピーしました！');
-            }
+            window.open(ev.imageUrl, '_blank');
+            toast('キャプションをコピーしました！');
         } else {
             toast('キャプションをコピーしました');
         }
@@ -1461,14 +1470,6 @@
             text: text,
             url: url
         };
-        
-        if (ev.imageUrl && ev.imageUrl.startsWith('data:')) {
-            try {
-                const response = await fetch(ev.imageUrl);
-                const blob = await response.blob();
-                shareData.files = [new File([blob], 'event.jpg', { type: 'image/jpeg' })];
-            } catch (e) {}
-        }
         
         try {
             await navigator.share(shareData);
@@ -1678,9 +1679,11 @@
         const f = e.target.files[0];
         if (f) {
             try {
-                const compressed = await compressImage(f, 400, 0.6);
-                profImg = compressed;
-                $('editAv').innerHTML = `<img src="${compressed}">`;
+                const blob = await compressImage(f, 400, 0.85);
+                profImg = blob; // Blobを保存
+                // プレビュー用にURLを作成
+                const previewUrl = URL.createObjectURL(blob);
+                $('editAv').innerHTML = `<img src="${previewUrl}">`;
             } catch (err) {
                 toast('画像の処理に失敗しました', 'error');
             }
@@ -1690,10 +1693,20 @@
     async function saveProfile(e) {
         e.preventDefault();
         
-        const photoURL = profImg || userData.photoURL || null;
-        if (photoURL && photoURL.length > 900000) {
-            toast('画像サイズが大きすぎます', 'error');
-            return;
+        let photoURL = userData.photoURL || null;
+        
+        // 新しい画像がある場合はStorageにアップロード
+        if (profImg && profImg instanceof Blob) {
+            try {
+                toast('画像をアップロード中...', 'success');
+                const imagePath = `profiles/${user.uid}/${Date.now()}.jpg`;
+                photoURL = await uploadImageToStorage(profImg, imagePath);
+                log('Profile image uploaded: ' + photoURL);
+            } catch (imgErr) {
+                log('Profile image upload failed: ' + imgErr.message);
+                toast('画像アップロード失敗', 'error');
+                return;
+            }
         }
         
         const data = {
@@ -1711,6 +1724,7 @@
             await user.updateProfile({ displayName: data.displayName });
             await db.collection('users').doc(user.uid).set({ ...userData, ...data }, { merge: true });
             userData = { ...userData, ...data };
+            profImg = null; // リセット
             updateUI();
             closeModal('editModal');
             toast('プロフィールを更新しました');
